@@ -133,8 +133,10 @@ fi
 # 3. Authenticate with GHCR
 echo ""
 echo "🔐 GitHub Container Registry Authentication"
-echo "To download DataPilot, you need a Personal Access Token (PAT) provided by the vendor."
-read -p "GitHub Username: " gh_user
+echo "To download DataPilot, you need a Personal Access Token (PAT) from the vendor."
+echo "If you don't have one, ask your vendor for a 'read:packages' token."
+echo "Username should be your GitHub username or the vendor's GitHub organization account if specified by them."
+read -p "GitHub Username (e.g. your-github-name): " gh_user
 read -s -p "GitHub Personal Access Token (PAT): " gh_token
 echo ""
 
@@ -144,6 +146,8 @@ if [ -z "$gh_user" ] || [ -z "$gh_token" ]; then
 fi
 
 echo "Logging in to ghcr.io..."
+# Note: In some sudo environments (like macOS Docker Desktop), docker.sock might return 500 errors.
+# Using 'sudo -u $SUDO_USER' or relying on standard docker group permissions is usually safer.
 echo "$gh_token" | docker login ghcr.io -u "$gh_user" --password-stdin
 
 if [ $? -ne 0 ]; then
