@@ -170,4 +170,11 @@ front_port=$(grep "^FRONTEND_PORT=" .env | cut -d '=' -f 2 || echo "80")
 host_addr=$(grep "^HOST_IP=" .env | cut -d '=' -f 2 || echo "localhost")
 
 echo "   http://${host_addr}:${front_port}"
+echo ""
+echo "🔑 Default Admin Credentials:"
+echo "   Email:    admin@datapilot.co"
+echo "   Password: admin123"
+echo ""
+echo "⚠️  IMPORTANT: Please change the default password"
+echo "   immediately after your first login!"
 echo "================================================="
