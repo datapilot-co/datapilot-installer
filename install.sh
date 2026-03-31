@@ -132,7 +132,17 @@ EOF
     
     echo "✅ Environment variables configured in .env file."
 else
-    echo "ℹ️  Existing .env file found. Skipping generation."
+    echo "ℹ️  Existing .env file found. Preserving settings."
+    # Check if ENCRYPTION_KEY is missing from existing .env and append it
+    if ! grep -q "^ENCRYPTION_KEY=" .env; then
+        echo "⚠️  ENCRYPTION_KEY missing in existing .env. Generating and appending..."
+        if command -v openssl &> /dev/null; then
+            encryption_key=$(openssl rand -hex 32)
+        else
+            encryption_key="enc_key_$(date +%s)_random"
+        fi
+        echo "ENCRYPTION_KEY=${encryption_key}" >> .env
+    fi
 fi
 
 # 3. Authenticate with GHCR
