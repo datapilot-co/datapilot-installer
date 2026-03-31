@@ -106,10 +106,11 @@ if [ ! -f .env ]; then
     # Generate a random 32 char secret key if openssl is available
     if command -v openssl &> /dev/null; then
         secret_key=$(openssl rand -hex 32)
-        encryption_key=$(openssl rand -hex 32)
+        # Fernet requires 32 bytes, url-safe base64 encoded (44 chars)
+        encryption_key=$(openssl rand -base64 32 | tr '+/' '-_')
     else
         secret_key="secret_key_$(date +%s)_random"
-        encryption_key="enc_key_$(date +%s)_random"
+        encryption_key=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_')
     fi
 
 cat << EOF > .env
@@ -137,9 +138,9 @@ else
     if ! grep -q "^ENCRYPTION_KEY=" .env; then
         echo "⚠️  ENCRYPTION_KEY missing in existing .env. Generating and appending..."
         if command -v openssl &> /dev/null; then
-            encryption_key=$(openssl rand -hex 32)
+            encryption_key=$(openssl rand -base64 32 | tr '+/' '-_')
         else
-            encryption_key="enc_key_$(date +%s)_random"
+            encryption_key=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_')
         fi
         echo "ENCRYPTION_KEY=${encryption_key}" >> .env
     fi
