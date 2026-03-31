@@ -73,6 +73,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=${SECRET_KEY}
       - CORS_ORIGINS=http://localhost:${FRONTEND_PORT:-80},http://${HOST_IP:-localhost}:${FRONTEND_PORT:-80}
+      - PORT=8008
     ports:
       - "${BACKEND_PORT:-8008}:8008"
 
@@ -161,6 +162,31 @@ docker compose pull
 docker compose up -d
 
 echo ""
+echo "⏳ Waiting for the backend service to initialize and become healthy..."
+# Backend konteynerının ayağa kalkması ve healthy olması için 60 saniyeye kadar bekliyoruz.
+max_retries=30
+count=0
+while [ $count -lt $max_retries ]; do
+    status=$(docker compose ps backend --format "{{.Status}}" | grep -o 'healthy')
+    if [ "$status" == "healthy" ]; then
+        break
+    fi
+    echo -n "."
+    sleep 2
+    count=$((count+1))
+done
+echo ""
+
+if [ "$status" != "healthy" ]; then
+    echo "⚠️ Warning: Backend service took too long to become healthy. Database seeding might not have completed."
+else
+    echo "⚙️  Seeding database with default admin and demo data..."
+    # Backend sağlıklı olduktan sonra migration'ları (seeding dahil) zorunlu olarak senkronize ediyoruz.
+    docker compose exec -T backend alembic upgrade head || echo "⚠️ Warning: Database seeding failed."
+    echo "✅ Database initialized successfully!"
+fi
+
+echo ""
 echo "================================================="
 echo "✅ DataPilot has been successfully installed and started!"
 echo ""
@@ -174,6 +200,8 @@ echo ""
 echo "🔑 Default Admin Credentials:"
 echo "   Email:    admin@datapilot.co"
 echo "   Password: admin123"
+echo ""
+echo "📦  Demo Data (Domains, Glossary Terms) is pre-loaded!"
 echo ""
 echo "⚠️  IMPORTANT: Please change the default password"
 echo "   immediately after your first login!"
