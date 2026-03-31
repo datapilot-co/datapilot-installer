@@ -72,6 +72,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-data_pilot_user}:${POSTGRES_PASSWORD:-secure_password_123}@db:5432/${POSTGRES_DB:-data_pilot}
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - CORS_ORIGINS=http://localhost:${FRONTEND_PORT:-80},http://${HOST_IP:-localhost}:${FRONTEND_PORT:-80}
       - PORT=8008
     ports:
@@ -105,8 +106,10 @@ if [ ! -f .env ]; then
     # Generate a random 32 char secret key if openssl is available
     if command -v openssl &> /dev/null; then
         secret_key=$(openssl rand -hex 32)
+        encryption_key=$(openssl rand -hex 32)
     else
         secret_key="secret_key_$(date +%s)_random"
+        encryption_key="enc_key_$(date +%s)_random"
     fi
 
 cat << EOF > .env
@@ -121,6 +124,7 @@ POSTGRES_USER=data_pilot_user
 POSTGRES_PASSWORD=${db_pass}
 POSTGRES_DB=data_pilot
 SECRET_KEY=${secret_key}
+ENCRYPTION_KEY=${encryption_key}
 
 GHCR_FRONTEND_IMAGE=ghcr.io/datapilot-co/datapilot-frontend:1.0.4
 GHCR_BACKEND_IMAGE=ghcr.io/datapilot-co/datapilot-backend:1.0.4
