@@ -41,7 +41,7 @@ services:
     volumes:
       - data_pilot_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "${POSTGRES_USER:-data_pilot_user}" ]
+      test: [ "CMD", "pg_isready", "-U", "${POSTGRES_USER:-data_pilot_user}", "-d", "${POSTGRES_DB:-data_pilot}" ]
       interval: 10s
       timeout: 5s
       retries: 5
