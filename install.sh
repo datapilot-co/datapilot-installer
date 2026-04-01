@@ -61,7 +61,7 @@ services:
       retries: 5
 
   backend:
-    image: ${GHCR_BACKEND_IMAGE:-ghcr.io/datapilot-co/datapilot-backend:1.0.5}
+    image: ${GHCR_BACKEND_IMAGE:-ghcr.io/datapilot-co/datapilot-backend:1.0.6}
     restart: always
     depends_on:
       db:
@@ -79,7 +79,7 @@ services:
       - "${BACKEND_PORT:-8008}:8008"
 
   frontend:
-    image: ${GHCR_FRONTEND_IMAGE:-ghcr.io/datapilot-co/datapilot-frontend:1.0.5}
+    image: ${GHCR_FRONTEND_IMAGE:-ghcr.io/datapilot-co/datapilot-frontend:1.0.6}
     restart: always
     environment:
       - VITE_API_URL=http://${HOST_IP:-localhost}:${BACKEND_PORT:-8008}/api/v1
@@ -127,8 +127,8 @@ POSTGRES_DB=data_pilot
 SECRET_KEY=${secret_key}
 ENCRYPTION_KEY=${encryption_key}
 
-GHCR_FRONTEND_IMAGE=ghcr.io/datapilot-co/datapilot-frontend:1.0.5
-GHCR_BACKEND_IMAGE=ghcr.io/datapilot-co/datapilot-backend:1.0.5
+GHCR_FRONTEND_IMAGE=ghcr.io/datapilot-co/datapilot-frontend:1.0.6
+GHCR_BACKEND_IMAGE=ghcr.io/datapilot-co/datapilot-backend:1.0.6
 EOF
     
     echo "✅ Environment variables configured in .env file."
