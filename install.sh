@@ -1,11 +1,23 @@
 #!/bin/bash
 # DataPilot Installation Script (GHCR Version)
 # Fully automatic: asks only what it must, generates everything else.
+#
+# Safe to re-run: if a .env from a previous install is found in the current directory,
+# the script UPGRADES in place. It keeps every existing setting and secret (database
+# password, ENCRYPTION_KEY, ports, admin account), only moves the image tags to the
+# version pinned below, restarts backend/frontend and removes the previous DataPilot
+# images from this host. Your database volume is never touched.
 
 set -e
 
+# Image version installed by this script (pinned, no floating tags).
+# Override for a specific release:  DATAPILOT_VERSION=1.0.39 bash install.sh
+DATAPILOT_VERSION="${DATAPILOT_VERSION:-1.0.38}"
+FRONTEND_IMAGE="ghcr.io/datapilot-co/datapilot-frontend:${DATAPILOT_VERSION}"
+BACKEND_IMAGE="ghcr.io/datapilot-co/datapilot-backend:${DATAPILOT_VERSION}"
+
 echo "================================================="
-echo "   DataPilot Installer"
+echo "   DataPilot Installer  (v${DATAPILOT_VERSION})"
 echo "================================================="
 
 # ─── 1. Docker check ──────────────────────────────────
@@ -22,58 +34,96 @@ fi
 
 echo "Docker OK: $(docker --version)"
 
-# ─── 2. Interactive questions (only what cannot be auto-generated) ──
-echo ""
-echo "--- Configuration ---"
-
-read -p "Host IP or domain (browsers will use this to reach DataPilot) [localhost]: " host_ip
-host_ip=${host_ip:-localhost}
-
-read -p "Frontend port  [80]: " frontend_port
-frontend_port=${frontend_port:-80}
-
-read -p "Backend API port  [8008]: " backend_port
-backend_port=${backend_port:-8008}
-
-read -p "Database port (host-side)  [5432]: " db_port
-db_port=${db_port:-5432}
-
-read -p "Redis port (host-side)  [6379]: " redis_port
-redis_port=${redis_port:-6379}
-
-read -p "Database password [auto-generate]: " db_pass
-if [ -z "$db_pass" ]; then
-    db_pass="dp_$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
-    echo "  Generated DB password: $db_pass"
+# ─── 2. Existing installation? ────────────────────────
+upgrade_mode=0
+if [ -f .env ] && grep -q '^ENCRYPTION_KEY=' .env; then
+    upgrade_mode=1
 fi
 
+env_value() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2-; }
+
+if [ "$upgrade_mode" = "1" ]; then
+    echo ""
+    echo "Existing installation detected (.env found) -> UPGRADE mode."
+    echo "Your settings, secrets, admin account and data are kept as they are."
+    backup=".env.bak.$(date +%Y%m%d%H%M%S)"
+    cp -p .env "$backup"
+    echo "  .env backed up to ${backup}"
+    host_ip="$(env_value HOST_IP)";            host_ip=${host_ip:-localhost}
+    frontend_port="$(env_value FRONTEND_PORT)"; frontend_port=${frontend_port:-80}
+    backend_port="$(env_value BACKEND_PORT)";   backend_port=${backend_port:-8008}
+else
+    # ─── 2b. Interactive questions (only what cannot be auto-generated) ──
+    echo ""
+    echo "--- Configuration ---"
+
+    read -p "Host IP or domain (browsers will use this to reach DataPilot) [localhost]: " host_ip
+    host_ip=${host_ip:-localhost}
+
+    read -p "Frontend port  [80]: " frontend_port
+    frontend_port=${frontend_port:-80}
+
+    read -p "Backend API port  [8008]: " backend_port
+    backend_port=${backend_port:-8008}
+
+    read -p "Database port (host-side)  [5432]: " db_port
+    db_port=${db_port:-5432}
+
+    read -p "Redis port (host-side)  [6379]: " redis_port
+    redis_port=${redis_port:-6379}
+
+    read -p "Database password [auto-generate]: " db_pass
+    if [ -z "$db_pass" ]; then
+        db_pass="dp_$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+        echo "  Generated DB password: $db_pass"
+    fi
+fi
+
+# ─── 3. GitHub Container Registry credentials ─────────
 echo ""
 echo "--- GitHub Container Registry ---"
-echo "You need a Personal Access Token (PAT) with read:packages scope."
-read -p "GitHub Username: " gh_user
-read -s -p "GitHub PAT: " gh_token
-echo ""
+gh_user="${GHCR_USER:-}"
+gh_token="${GHCR_TOKEN:-}"
+if [ -z "$gh_user" ] || [ -z "$gh_token" ]; then
+    echo "You need a Personal Access Token (PAT) with read:packages scope."
+    read -p "GitHub Username: " gh_user
+    read -s -p "GitHub PAT: " gh_token
+    echo ""
+fi
 
 if [ -z "$gh_user" ] || [ -z "$gh_token" ]; then
     echo "Error: GitHub username and token are required."
     exit 1
 fi
 
-# ─── 3. Auto-generate secrets ─────────────────────────
-if command -v openssl &> /dev/null; then
-    secret_key=$(openssl rand -hex 32)
-    encryption_key=$(openssl rand -base64 32 | tr '+/' '-_')
-    jwt_secret=$(openssl rand -hex 32)
+# ─── 4. Secrets + .env (fresh install only) ───────────
+set_env_var() {
+    local key="$1" val="$2"
+    if grep -q "^${key}=" .env; then
+        sed -i.tmp "s|^${key}=.*|${key}=${val}|" .env && rm -f .env.tmp
+    else
+        echo "${key}=${val}" >> .env
+    fi
+}
+
+if [ "$upgrade_mode" = "1" ]; then
+    set_env_var GHCR_FRONTEND_IMAGE "$FRONTEND_IMAGE"
+    set_env_var GHCR_BACKEND_IMAGE  "$BACKEND_IMAGE"
+    echo ".env image tags updated to ${DATAPILOT_VERSION} (all other values unchanged)."
 else
-    secret_key=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 64)
-    encryption_key=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_')
-    jwt_secret=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 64)
-fi
+    if command -v openssl &> /dev/null; then
+        secret_key=$(openssl rand -hex 32)
+        encryption_key=$(openssl rand -base64 32 | tr '+/' '-_')
+        jwt_secret=$(openssl rand -hex 32)
+    else
+        secret_key=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 64)
+        encryption_key=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_')
+        jwt_secret=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 64)
+    fi
 
-echo "Secrets generated automatically."
+    echo "Secrets generated automatically."
 
-# ─── 4. Generate .env ─────────────────────────────────
-cat << EOF > .env
+    cat << EOF > .env
 # DataPilot Environment (auto-generated by install.sh)
 HOST_IP=${host_ip}
 FRONTEND_PORT=${frontend_port}
@@ -89,13 +139,17 @@ SECRET_KEY=${secret_key}
 ENCRYPTION_KEY=${encryption_key}
 JWT_SECRET_KEY=${jwt_secret}
 
-GHCR_FRONTEND_IMAGE=ghcr.io/datapilot-co/datapilot-frontend:latest
-GHCR_BACKEND_IMAGE=ghcr.io/datapilot-co/datapilot-backend:release-ready
+GHCR_FRONTEND_IMAGE=${FRONTEND_IMAGE}
+GHCR_BACKEND_IMAGE=${BACKEND_IMAGE}
 EOF
 
-echo ".env created."
+    echo ".env created."
+fi
 
-# ─── 5. Generate docker-compose.yml ───────────────────
+# ─── 5. docker-compose.yml (never overwritten on upgrade) ─
+if [ "$upgrade_mode" = "1" ] && [ -f docker-compose.yml ]; then
+    echo "docker-compose.yml kept as is (image tags come from .env)."
+else
 cat << 'COMPOSE' > docker-compose.yml
 services:
   db:
@@ -130,7 +184,7 @@ services:
       retries: 5
 
   backend:
-    image: ${GHCR_BACKEND_IMAGE:-ghcr.io/datapilot-co/datapilot-backend:release-ready}
+    image: ${GHCR_BACKEND_IMAGE:-ghcr.io/datapilot-co/datapilot-backend:__DP_VERSION__}
     restart: always
     depends_on:
       db:
@@ -149,7 +203,7 @@ services:
       - "${BACKEND_PORT:-8008}:8008"
 
   frontend:
-    image: ${GHCR_FRONTEND_IMAGE:-ghcr.io/datapilot-co/datapilot-frontend:latest}
+    image: ${GHCR_FRONTEND_IMAGE:-ghcr.io/datapilot-co/datapilot-frontend:__DP_VERSION__}
     restart: always
     environment:
       - VITE_API_URL=http://${HOST_IP:-localhost}:${BACKEND_PORT:-8008}/api/v1
@@ -162,15 +216,14 @@ volumes:
   data_pilot_postgres_data:
   data_pilot_redis_data:
 COMPOSE
-
+sed -i.tmp "s|__DP_VERSION__|${DATAPILOT_VERSION}|g" docker-compose.yml && rm -f docker-compose.yml.tmp
 echo "docker-compose.yml created."
+fi
 
 # ─── 6. GHCR login ────────────────────────────────────
 echo ""
 echo "Logging in to ghcr.io..."
-echo "$gh_token" | docker login ghcr.io -u "$gh_user" --password-stdin
-
-if [ $? -ne 0 ]; then
+if ! echo "$gh_token" | docker login ghcr.io -u "$gh_user" --password-stdin; then
     echo "Error: GHCR authentication failed. Check your token."
     exit 1
 fi
@@ -178,9 +231,25 @@ fi
 echo "GHCR login OK."
 
 # ─── 7. Pull images ───────────────────────────────────
+# Remember which DataPilot images were on this host before the upgrade.
+old_ids=""
+if [ "$upgrade_mode" = "1" ]; then
+    old_ids="$(docker images --format '{{.ID}} {{.Repository}}' 2>/dev/null \
+        | awk '$2 ~ /^ghcr\.io\/datapilot-co\/datapilot-(backend|frontend)$/ {print $1}' | sort -u)"
+fi
+
 echo ""
 echo "Pulling images..."
-docker compose pull
+if [ "$upgrade_mode" = "1" ]; then
+    # Only the application images; database/redis images are left untouched.
+    app_services="backend frontend"
+    if docker compose config --services 2>/dev/null | grep -qx worker; then
+        app_services="backend worker frontend"
+    fi
+    docker compose pull $app_services
+else
+    docker compose pull
+fi
 
 # ─── 8. Start services (ordered) ──────────────────────
 echo ""
@@ -209,8 +278,12 @@ wait_for_healthy() {
 wait_for_healthy "db" 120
 wait_for_healthy "redis" 60
 
-docker compose up -d backend
-docker compose up -d frontend
+if [ "$upgrade_mode" = "1" ]; then
+    docker compose up -d $app_services
+else
+    docker compose up -d backend
+    docker compose up -d frontend
+fi
 
 # ─── 9. Wait for backend migration/seed completion ────
 echo ""
@@ -247,7 +320,27 @@ with engine.connect() as conn:
 print("  Admin user verified.")
 PY
 
-# ─── 11. Done ─────────────────────────────────────────
+# ─── 11. Remove previous DataPilot images (upgrade only) ──
+if [ "$upgrade_mode" = "1" ] && [ "${DATAPILOT_KEEP_OLD_IMAGES:-0}" != "1" ]; then
+    echo ""
+    echo "Removing previous DataPilot images from this host..."
+    removed=0
+    # a) images of other versions that are still tagged
+    for id in $(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' 2>/dev/null \
+        | awk -v keep=":${DATAPILOT_VERSION}" '$1 ~ /^ghcr\.io\/datapilot-co\/datapilot-(backend|frontend):/ && substr($1, length($1)-length(keep)+1) != keep {print $2}' | sort -u); do
+        if docker image rm "$id" > /dev/null 2>&1; then echo "  removed old image $id"; removed=$((removed + 1)); fi
+    done
+    # b) images from before the upgrade that lost their tag (now untagged)
+    for id in $old_ids; do
+        if docker image inspect "$id" > /dev/null 2>&1 \
+           && [ -z "$(docker image inspect -f '{{join .RepoTags ","}}' "$id" 2>/dev/null)" ]; then
+            if docker image rm "$id" > /dev/null 2>&1; then echo "  removed old image $id"; removed=$((removed + 1)); fi
+        fi
+    done
+    echo "  ${removed} old image(s) removed. (Images still used by a container are kept.)"
+fi
+
+# ─── 12. Done ─────────────────────────────────────────
 front_url="http://${host_ip}"
 if [ "$frontend_port" != "80" ]; then
     front_url="http://${host_ip}:${frontend_port}"
@@ -256,7 +349,11 @@ api_url="http://${host_ip}:${backend_port}/docs"
 
 echo ""
 echo "================================================="
-echo "  DataPilot installed successfully!"
+if [ "$upgrade_mode" = "1" ]; then
+    echo "  DataPilot upgraded to v${DATAPILOT_VERSION}!"
+else
+    echo "  DataPilot installed successfully!"
+fi
 echo ""
 echo "  Frontend : ${front_url}"
 echo "  API Docs : ${api_url}"
@@ -264,6 +361,5 @@ echo ""
 echo "  Login:"
 echo "    Email    : admin@datapilot.co"
 echo "    Password : admin123"
-echo ""
-echo "  Change the default password after first login."
+echo "  (default credentials - change them under your profile settings)"
 echo "================================================="
